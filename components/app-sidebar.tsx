@@ -5,8 +5,16 @@ import { CoinsIcon, MessageSquareIcon, SquarePenIcon } from "lucide-react"
 import Image from "next/image"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { useState } from "react"
 
 import { Empty, EmptyDescription } from "@/components/ui/empty"
+import {
+  Popover,
+  PopoverContent,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import {
   Sidebar,
   SidebarContent,
@@ -21,9 +29,11 @@ import {
   SidebarMenuItem,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
+import type { GameListItem } from "@/lib/games/queries"
 
-export function AppSidebar() {
+export function AppSidebar({ games }: { games: GameListItem[] }) {
   const pathname = usePathname()
+  const [recentsOpen, setRecentsOpen] = useState(false)
 
   return (
     <Sidebar collapsible="icon">
@@ -61,17 +71,63 @@ export function AppSidebar() {
         <SidebarGroup>
           <SidebarGroupLabel>Recents</SidebarGroupLabel>
           <SidebarGroupContent>
-            <Empty className="border p-2 group-data-[collapsible=icon]:hidden">
-              <EmptyDescription className="text-xs">
-                Your games will live here.
-              </EmptyDescription>
-            </Empty>
+            {games.length > 0 ? (
+              <SidebarMenu className="group-data-[collapsible=icon]:hidden">
+                {games.map((game) => (
+                  <SidebarMenuItem key={game.id}>
+                    <SidebarMenuButton
+                      render={<Link href={`/games/${game.id}`} />}
+                      isActive={pathname === `/games/${game.id}`}
+                    >
+                      <span className="truncate">{game.title}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            ) : (
+              <Empty className="border p-2 group-data-[collapsible=icon]:hidden">
+                <EmptyDescription className="text-xs">
+                  Your games will live here.
+                </EmptyDescription>
+              </Empty>
+            )}
             <SidebarMenu className="hidden group-data-[collapsible=icon]:flex">
               <SidebarMenuItem>
-                <SidebarMenuButton tooltip="Recents">
-                  <MessageSquareIcon />
-                  <span>Recents</span>
-                </SidebarMenuButton>
+                <Popover open={recentsOpen} onOpenChange={setRecentsOpen}>
+                  <SidebarMenuButton
+                    tooltip="Recents"
+                    render={<PopoverTrigger />}
+                  >
+                    <MessageSquareIcon />
+                    <span>Recents</span>
+                  </SidebarMenuButton>
+                  <PopoverContent side="right" align="start" className="w-64">
+                    <PopoverHeader>
+                      <PopoverTitle>Recents</PopoverTitle>
+                    </PopoverHeader>
+                    {games.length > 0 ? (
+                      <SidebarMenu>
+                        {games.map((game) => (
+                          <SidebarMenuItem key={game.id}>
+                            <SidebarMenuButton
+                              render={<Link href={`/games/${game.id}`} />}
+                              isActive={pathname === `/games/${game.id}`}
+                              onClick={() => setRecentsOpen(false)}
+                            >
+                              <span className="truncate">{game.title}</span>
+                            </SidebarMenuButton>
+                          </SidebarMenuItem>
+                        ))}
+                      </SidebarMenu>
+                    ) : (
+                      <Empty className="border p-2">
+                        <EmptyDescription className="text-xs">
+                          Your games will live here.
+                        </EmptyDescription>
+                      </Empty>
+                    )}
+                  </PopoverContent>
+                </Popover>
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
