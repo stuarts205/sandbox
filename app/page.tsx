@@ -1,6 +1,5 @@
 import { OrganizationSwitcher, UserButton } from "@clerk/nextjs"
 import Image from "next/image"
-
 import {
   Empty,
   EmptyDescription,
