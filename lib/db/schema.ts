@@ -1,4 +1,12 @@
-import { index, pgTable, text, timestamp, uuid } from "drizzle-orm/pg-core"
+import type { UIMessage } from "ai"
+import {
+  index,
+  jsonb,
+  pgTable,
+  text,
+  timestamp,
+  uuid,
+} from "drizzle-orm/pg-core"
 
 export const games = pgTable(
   "games",
@@ -6,6 +14,8 @@ export const games = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     orgId: text("org_id").notNull(),
     title: text("title").notNull(),
+    // The game's chat thread, stored whole in useChat's UIMessage format.
+    messages: jsonb("messages").$type<UIMessage[]>().notNull().default([]),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

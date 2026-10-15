@@ -10,10 +10,9 @@ export function NewGameComposer() {
   const [isPending, startTransition] = useTransition()
 
   function handleSubmit(value: string) {
-    startTransition(async () => {
-      await createGame(value)
-      setPrompt("")
-    })
+    // createGame redirects to the new game, so the composer stays pending
+    // until the navigation lands.
+    startTransition(() => createGame(value))
   }
 
   return (
