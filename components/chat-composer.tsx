@@ -1,7 +1,6 @@
 "use client"
 
 import { ArrowUpIcon, ChevronDownIcon, GripHorizontalIcon } from "lucide-react"
-import { useState, useTransition } from "react"
 
 import {
   DropdownMenu,
@@ -15,34 +14,40 @@ import {
   InputGroupButton,
   InputGroupTextarea,
 } from "@/components/ui/input-group"
-import { createGame } from "@/lib/games/actions"
 
 const models = ["Kimi K3", "Claude Opus 5", "GPT-5", "Gemini 3 Pro"]
 
-export function ChatComposer() {
-  const [prompt, setPrompt] = useState("")
-  const [isPending, startTransition] = useTransition()
+type ChatComposerProps = {
+  value: string
+  onValueChange: (value: string) => void
+  onSubmit: (value: string) => void
+  pending?: boolean
+  placeholder?: string
+}
 
-  const canSubmit = prompt.trim().length > 0 && !isPending
+export function ChatComposer({
+  value,
+  onValueChange,
+  onSubmit,
+  pending = false,
+  placeholder = "Describe the game you want to build...",
+}: ChatComposerProps) {
+  const canSubmit = value.trim().length > 0 && !pending
 
   function submit() {
     if (!canSubmit) return
-
-    startTransition(async () => {
-      await createGame(prompt)
-      setPrompt("")
-    })
+    onSubmit(value)
   }
 
   return (
     <InputGroup className="bg-popover">
       <InputGroupTextarea
-        placeholder="Describe the game you want to build..."
+        placeholder={placeholder}
         rows={1}
         className="field-sizing-content max-h-48 min-h-10"
-        value={prompt}
-        disabled={isPending}
-        onChange={(event) => setPrompt(event.target.value)}
+        value={value}
+        disabled={pending}
+        onChange={(event) => onValueChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) {
             event.preventDefault()
