@@ -1,5 +1,7 @@
 "use client"
 
+import { useChat } from "@ai-sdk/react"
+import type { UIMessage } from "ai"
 import Image from "next/image"
 import { useState } from "react"
 
@@ -19,66 +21,18 @@ import {
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
 
-type ChatMessage = {
-  id: string
-  role: "user" | "assistant"
-  content: string
+function getText(message: UIMessage) {
+  return message.parts
+    .map((part) => (part.type === "text" ? part.text : ""))
+    .join("")
 }
-
-const messages: ChatMessage[] = [
-  {
-    id: "1",
-    role: "user",
-    content:
-      "Make a top-down racing game where you drift around a neon city at night.",
-  },
-  {
-    id: "2",
-    role: "assistant",
-    content:
-      "On it! I'll set up a top-down camera, a car with drift physics, and a looping track through a neon-lit city grid. Want a time trial or races against AI opponents?",
-  },
-  {
-    id: "3",
-    role: "user",
-    content: "Races against AI. Three opponents, and give them different colors.",
-  },
-  {
-    id: "4",
-    role: "assistant",
-    content:
-      "Done. There are now three AI racers in pink, cyan and lime, each following the racing line with slightly different aggression. The first to finish three laps wins.",
-  },
-  {
-    id: "5",
-    role: "user",
-    content: "Can drifting fill up a boost meter?",
-  },
-  {
-    id: "6",
-    role: "assistant",
-    content:
-      "Yes. Holding a drift now charges a boost meter in the bottom-left corner. Press Space to spend it for a short burst of speed, with a trail of sparks behind the car.",
-  },
-  {
-    id: "7",
-    role: "user",
-    content: "Love it. Add some rain and puddles that make the car slide.",
-  },
-  {
-    id: "8",
-    role: "assistant",
-    content:
-      "Added a rain shader with reflections on the road, plus puddles scattered around the corners. Driving through one cuts your grip for a moment, so you'll need to plan your drift lines around them.",
-  },
-]
 
 export function ChatThread() {
   const [input, setInput] = useState("")
+  const { messages, sendMessage, status } = useChat()
 
-  // Temporary until messages are wired up to the AI SDK.
-  function sendMessage(value: string) {
-    console.log(value)
+  function submit(value: string) {
+    sendMessage({ text: value })
     setInput("")
   }
 
@@ -97,7 +51,7 @@ export function ChatThread() {
                       </MessageAvatar>
                       <MessageContent>
                         <Bubble variant="ghost">
-                          <BubbleContent>{message.content}</BubbleContent>
+                          <BubbleContent>{getText(message)}</BubbleContent>
                         </Bubble>
                       </MessageContent>
                     </Message>
@@ -105,7 +59,7 @@ export function ChatThread() {
                     <Message align="end">
                       <MessageContent>
                         <Bubble variant="secondary">
-                          <BubbleContent>{message.content}</BubbleContent>
+                          <BubbleContent>{getText(message)}</BubbleContent>
                         </Bubble>
                       </MessageContent>
                     </Message>
@@ -121,7 +75,8 @@ export function ChatThread() {
         <ChatComposer
           value={input}
           onValueChange={setInput}
-          onSubmit={sendMessage}
+          onSubmit={submit}
+          pending={status === "submitted" || status === "streaming"}
           placeholder="Ask for a change..."
         />
       </div>

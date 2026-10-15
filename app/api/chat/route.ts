@@ -1,4 +1,4 @@
-import { anthropic } from "@ai-sdk/anthropic"
+import { createAnthropic } from "@ai-sdk/anthropic"
 import { auth } from "@clerk/nextjs/server"
 import {
   convertToModelMessages,
@@ -9,6 +9,12 @@ import {
 } from "ai"
 
 export const maxDuration = 30
+
+// User-level keys (sk-ant-usr-) aren't tied to a workspace, so each request
+// must name one via the anthropic-workspace-id header.
+const anthropic = createAnthropic({
+  headers: { "anthropic-workspace-id": process.env.ANTHROPIC_WORKSPACE_ID! },
+})
 
 export async function POST(req: Request) {
   const { isAuthenticated } = await auth()
