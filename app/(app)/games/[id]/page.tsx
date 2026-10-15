@@ -15,7 +15,7 @@ export default async function Page({ params }: PageProps<"/games/[id]">) {
 
   return (
     <div className="flex h-svh">
-      <ChatThread />
+      <ChatThread id={game.id} initialMessages={game.messages} />
     </div>
   )
 }
