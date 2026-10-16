@@ -1,6 +1,11 @@
 "use client"
 
-import { ArrowUpIcon, ChevronDownIcon, GripHorizontalIcon } from "lucide-react"
+import {
+  ArrowUpIcon,
+  ChevronDownIcon,
+  GripHorizontalIcon,
+  SquareIcon,
+} from "lucide-react"
 
 import {
   DropdownMenu,
@@ -21,6 +26,8 @@ type ChatComposerProps = {
   value: string
   onValueChange: (value: string) => void
   onSubmit: (value: string) => void
+  // When given, the button turns into a stop button while pending.
+  onStop?: () => void
   pending?: boolean
   placeholder?: string
 }
@@ -29,10 +36,12 @@ export function ChatComposer({
   value,
   onValueChange,
   onSubmit,
+  onStop,
   pending = false,
   placeholder = "Describe the game you want to build...",
 }: ChatComposerProps) {
   const canSubmit = value.trim().length > 0 && !pending
+  const canStop = pending && onStop !== undefined
 
   function submit() {
     if (!canSubmit) return
@@ -74,10 +83,11 @@ export function ChatComposer({
           variant="default"
           size="icon-sm"
           className="ml-auto rounded-full"
-          disabled={!canSubmit}
-          onClick={submit}
+          aria-label={canStop ? "Stop" : "Send"}
+          disabled={!canSubmit && !canStop}
+          onClick={canStop ? onStop : submit}
         >
-          <ArrowUpIcon />
+          {canStop ? <SquareIcon className="fill-current" /> : <ArrowUpIcon />}
         </InputGroupButton>
       </InputGroupAddon>
     </InputGroup>
