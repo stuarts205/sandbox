@@ -1,7 +1,6 @@
 import "server-only"
 
 import { auth } from "@clerk/nextjs/server"
-import type { UIMessage } from "ai"
 import { and, desc, eq } from "drizzle-orm"
 
 import { db } from "@/lib/db"
@@ -32,25 +31,18 @@ export async function getGame(id: string) {
   }
 
   const [game] = await db
-    .select({ id: games.id, title: games.title, messages: games.messages })
+    .select({
+      id: games.id,
+      title: games.title,
+      messages: games.messages,
+      chatAccessToken: games.chatAccessToken,
+      chatLastEventId: games.chatLastEventId,
+    })
     .from(games)
     .where(and(eq(games.id, id), eq(games.orgId, orgId)))
     .limit(1)
 
   return game ?? null
-}
-
-// Takes orgId explicitly: it runs from the chat stream's onEnd, after the
-// response has started, so it doesn't rely on request-scoped auth().
-export async function saveGameMessages(
-  id: string,
-  orgId: string,
-  messages: UIMessage[]
-) {
-  await db
-    .update(games)
-    .set({ messages })
-    .where(and(eq(games.id, id), eq(games.orgId, orgId)))
 }
 
 export type Game = NonNullable<Awaited<ReturnType<typeof getGame>>>

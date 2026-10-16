@@ -2,10 +2,10 @@
 
 import { useChat } from "@ai-sdk/react"
 import {
-  DefaultChatTransport,
-  type ReasoningUIPart,
-  type UIMessage,
-} from "ai"
+  useTriggerChatTransport,
+  type UseTriggerChatTransportOptions,
+} from "@trigger.dev/sdk/chat/react"
+import type { ReasoningUIPart, UIMessage } from "ai"
 import Image from "next/image"
 import { useEffect, useRef, useState } from "react"
 
@@ -32,6 +32,8 @@ import {
   TraceLine,
   TraceTitle,
 } from "@/components/ui/trace"
+import { mintChatAccessToken, startChatSession } from "@/lib/games/chat-actions"
+import type { gameChat } from "@/trigger/chat"
 
 function getText(message: UIMessage) {
   return message.parts
@@ -73,6 +75,10 @@ function Reasoning({ part }: { part: ReasoningUIPart }) {
   )
 }
 
+type ChatSession = NonNullable<
+  UseTriggerChatTransportOptions["sessions"]
+>[string]
+
 function AssistantAvatar() {
   return (
     <MessageAvatar className="size-8 bg-transparent self-start rounded-lg">
@@ -84,45 +90,64 @@ function AssistantAvatar() {
 export function ChatThread({
   id,
   initialMessages,
+  initialSession,
 }: {
   id: string
   initialMessages: UIMessage[]
+  // The chat's session, once it has one; lets a reload reconnect to it.
+  initialSession?: ChatSession
 }) {
   const [input, setInput] = useState("")
-  const { messages, sendMessage, regenerate, status } = useChat({
-    id,
-    messages: initialMessages,
-    // The server loads the stored thread, so only the new message is sent. A
-    // regenerate sends none: the server replies to the stored thread as-is.
-    transport: new DefaultChatTransport({
-      prepareSendMessagesRequest: ({ id, messages, trigger }) => ({
-        body: {
-          id,
-          message: trigger === "submit-message" ? messages.at(-1) : undefined,
-        },
-      }),
-    }),
+  // The agent loads the stored thread, so only the new message is sent. A
+  // regenerate sends none: the agent replies to the stored thread as-is.
+  const transport = useTriggerChatTransport<typeof gameChat>({
+    task: "game-chat",
+    accessToken: ({ chatId }) => mintChatAccessToken(chatId),
+    startSession: ({ chatId }) => startChatSession({ chatId }),
+    sessions: initialSession ? { [id]: initialSession } : undefined,
   })
+  const { messages, sendMessage, regenerate, resumeStream, stop, status } =
+    useChat({
+      id,
+      messages: initialMessages,
+      transport,
+    })
 
   // A new game arrives with its prompt stored but unanswered; reply to it once.
+  // Once the chat has a session, that reply (or a later one) may still be
+  // streaming from before a reload; reconnect to it instead.
   // useChat stops the chat on unmount, so a request sent from Strict Mode's
-  // throwaway mount would be aborted. Deferring it lets that cleanup cancel the
-  // timer before anything is sent; the ref then keeps it to one request.
-  const answeredId = useRef<string | null>(null)
+  // throwaway mount would be aborted, and an aborted reconnect makes the
+  // transport skip the next one until it winds down. Deferring it lets that
+  // cleanup cancel the timer before anything is sent; the ref then keeps it to
+  // one request. (useChat's own `resume` option has no such guard.)
+  const requestedId = useRef<string | null>(null)
   useEffect(() => {
-    if (answeredId.current === id) return
-    if (initialMessages.at(-1)?.role !== "user") return
+    if (requestedId.current === id) return
+    if (!initialSession && initialMessages.at(-1)?.role !== "user") return
 
     const timer = setTimeout(() => {
-      answeredId.current = id
-      regenerate()
+      requestedId.current = id
+      if (initialSession) {
+        resumeStream()
+      } else {
+        regenerate()
+      }
     })
     return () => clearTimeout(timer)
-  }, [id, initialMessages, regenerate])
+  }, [id, initialMessages, initialSession, regenerate, resumeStream])
 
   function submit(value: string) {
     sendMessage({ text: value })
     setInput("")
+  }
+
+  // useChat's stop() only ends the local stream, and after a resume it doesn't
+  // reach the agent at all; stopGeneration tells the agent to abort the turn.
+  // The run stays alive for the next message.
+  function cancel() {
+    stop()
+    void transport.stopGeneration(id)
   }
 
   return (
@@ -184,6 +209,7 @@ export function ChatThread({
           value={input}
           onValueChange={setInput}
           onSubmit={submit}
+          onStop={cancel}
           pending={status === "submitted" || status === "streaming"}
           placeholder="Ask for a change..."
         />
