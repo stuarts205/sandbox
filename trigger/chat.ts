@@ -48,7 +48,7 @@ export const gameChat = chat.agent({
 
   run: async ({ messages, tools, signal, streamText }) =>
     streamText({
-      model: anthropic("claude-sonnet-5-5"),
+      model: anthropic("claude-opus-5"),
       messages,
       tools,
       // streamText stops after one step by default, which would end the turn
