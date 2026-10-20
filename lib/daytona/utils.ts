@@ -1,3 +1,6 @@
+import { readdir } from "node:fs/promises"
+import path from "node:path"
+
 import { DaytonaNotFoundError } from "@daytona/sdk"
 import { eq } from "drizzle-orm"
 
@@ -8,14 +11,19 @@ import { games } from "@/lib/db/schema"
 export const GAME_DIR = "/home/daytona/game"
 export const GAME_PORT = 8080
 
-// Gives a game its sandbox: a fresh one with a placeholder page in the game
-// directory, its id saved on the game. The gameId label ties a sandbox back to
-// its game in the Daytona dashboard.
+// The files every new game starts from. Nothing imports them, so the path
+// resolves from the working directory: the project root under next and trigger
+// dev, and the build output in a Trigger.dev deploy, which trigger.config.ts
+// copies the folder into.
+const RUNTIME_DIR = path.join(process.cwd(), "lib/games/runtime")
+
+// Gives a game its sandbox: a fresh one seeded with the runtime files in the
+// game directory, its id saved on the game. The gameId label ties a sandbox
+// back to its game in the Daytona dashboard.
 export async function createGameSandbox(gameId: string) {
   const sandbox = await daytona.create({ labels: { gameId } })
 
-  await sandbox.fs.createFolder(GAME_DIR, "755")
-  await sandbox.fs.uploadFile(Buffer.from("New game"), `${GAME_DIR}/index.html`)
+  await seedGameDir(sandbox)
 
   await db
     .update(games)
@@ -104,6 +112,41 @@ export async function startGameServer(sandboxId: string) {
 }
 
 type Sandbox = Awaited<ReturnType<typeof daytona.get>>
+
+// Mirrors RUNTIME_DIR into GAME_DIR. Folders are created first, sorted so each
+// parent exists before its children, then every file is streamed up from disk
+// in one batch.
+async function seedGameDir(sandbox: Sandbox) {
+  const entries = await readdir(RUNTIME_DIR, {
+    recursive: true,
+    withFileTypes: true,
+  })
+  const toGamePath = (entry: (typeof entries)[number]) => {
+    const localPath = path.join(entry.parentPath, entry.name)
+    const relativePath = path.relative(RUNTIME_DIR, localPath)
+    return {
+      localPath,
+      gamePath: path.posix.join(GAME_DIR, ...relativePath.split(path.sep)),
+    }
+  }
+
+  const folders = entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => toGamePath(entry).gamePath)
+    .sort()
+  for (const folder of [GAME_DIR, ...folders]) {
+    await sandbox.fs.createFolder(folder, "755")
+  }
+
+  await sandbox.fs.uploadFiles(
+    entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => {
+        const { localPath, gamePath } = toGamePath(entry)
+        return { source: localPath, destination: gamePath }
+      })
+  )
+}
 
 async function isGameServerUp(sandbox: Sandbox) {
   const { exitCode } = await sandbox.process.executeCommand(

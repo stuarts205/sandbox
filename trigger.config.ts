@@ -1,3 +1,4 @@
+import { additionalFiles } from "@trigger.dev/build/extensions/core";
 import { defineConfig } from "@trigger.dev/sdk";
 
 export default defineConfig({
@@ -19,4 +20,11 @@ export default defineConfig({
     },
   },
   dirs: ["trigger"],
+  build: {
+    extensions: [
+      // Seeded into each new game sandbox from disk rather than imported, so
+      // the bundler won't pick it up on its own.
+      additionalFiles({ files: ["lib/games/runtime/**"] }),
+    ],
+  },
 });
