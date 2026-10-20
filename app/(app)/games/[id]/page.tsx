@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server"
 import { notFound } from "next/navigation"
 
-import { ChatThread } from "@/components/chat-thread"
+import { GameChat } from "@/components/game-chat"
 import { getGame } from "@/lib/games/queries"
 
 export default async function Page({ params }: PageProps<"/games/[id]">) {
@@ -15,9 +15,10 @@ export default async function Page({ params }: PageProps<"/games/[id]">) {
 
   return (
     <div className="flex h-svh">
-      <ChatThread
+      <GameChat
         id={game.id}
         initialMessages={game.messages}
+        sandboxId={game.sandboxId}
         initialSession={
           game.chatAccessToken
             ? {

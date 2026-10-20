@@ -29,6 +29,8 @@ export const games = pgTable(
       .$type<string[]>()
       .notNull()
       .default([]),
+    // The game's Daytona sandbox, created when its chat starts.
+    sandboxId: text("sandbox_id"),
     createdAt: timestamp("created_at", { withTimezone: true })
       .notNull()
       .defaultNow(),

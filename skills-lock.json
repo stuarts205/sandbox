@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "daytona": {
+      "source": "daytona/skills",
+      "sourceType": "github",
+      "skillPath": "skills/daytona/SKILL.md",
+      "computedHash": "61f804d4b516509e7c4707ad9f0ac9586764ecac31b7bacbef672549b428a5df"
+    }
+  }
+}
