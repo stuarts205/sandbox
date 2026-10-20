@@ -5,17 +5,22 @@ import {
   useTriggerChatTransport,
   type UseTriggerChatTransportOptions,
 } from "@trigger.dev/sdk/chat/react"
-import type { ReasoningUIPart, UIMessage } from "ai"
+import {
+  getToolName,
+  isToolUIPart,
+  type DynamicToolUIPart,
+  type ReasoningUIPart,
+  type ToolUIPart,
+  type UIMessage,
+} from "ai"
+import { CheckIcon, XIcon } from "lucide-react"
 import Image from "next/image"
 import { useEffect, useRef, useState } from "react"
 
 import { ChatComposer } from "@/components/chat-composer"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
-import {
-  Message,
-  MessageAvatar,
-  MessageContent,
-} from "@/components/ui/message"
+import { Marker, MarkerContent, MarkerIcon } from "@/components/ui/marker"
+import { Message, MessageAvatar, MessageContent } from "@/components/ui/message"
 import {
   MessageScroller,
   MessageScrollerButton,
@@ -24,6 +29,7 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
+import { Spinner } from "@/components/ui/spinner"
 import {
   Trace,
   TraceCollapsible,
@@ -75,13 +81,82 @@ function Reasoning({ part }: { part: ReasoningUIPart }) {
   )
 }
 
+type ToolPart = ToolUIPart | DynamicToolUIPart
+type ToolStatus = "active" | "done" | "failed"
+
+// Labels for the game's file tools, by status; other tools show their name.
+const toolLabels: Record<string, Record<ToolStatus, string>> = {
+  list_files: { active: "Listing", done: "Listed", failed: "Couldn't list" },
+  read_file: { active: "Reading", done: "Read", failed: "Couldn't read" },
+  write_file: { active: "Writing", done: "Wrote", failed: "Couldn't write" },
+  replace_text: { active: "Editing", done: "Edited", failed: "Couldn't edit" },
+  delete_file: {
+    active: "Deleting",
+    done: "Deleted",
+    failed: "Couldn't delete",
+  },
+}
+
+function getToolStatus(part: ToolPart): ToolStatus {
+  switch (part.state) {
+    case "output-available":
+      return "done"
+    case "output-error":
+    case "output-denied":
+      return "failed"
+    default:
+      return "active"
+  }
+}
+
+// The file tools all take a path; it streams in with the input, so it may not
+// be there yet.
+function getToolPath(part: ToolPart) {
+  const input = part.input as { path?: unknown } | undefined
+  return typeof input?.path === "string" ? input.path : undefined
+}
+
+function ToolCall({ part }: { part: ToolPart }) {
+  const status = getToolStatus(part)
+  const name = getToolName(part)
+  const label = toolLabels[name]?.[status] ?? name
+  const path = getToolPath(part) ?? (name === "list_files" ? "files" : "")
+
+  return (
+    <Marker
+      data-status={status}
+      title={part.state === "output-error" ? part.errorText : undefined}
+      className="data-[status=failed]:text-destructive"
+    >
+      <MarkerIcon>
+        {status === "active" ? (
+          <Spinner />
+        ) : status === "done" ? (
+          <CheckIcon />
+        ) : (
+          <XIcon />
+        )}
+      </MarkerIcon>
+      <MarkerContent>
+        {label}
+        {path && (
+          <>
+            {" "}
+            <code className="font-mono text-xs">{path}</code>
+          </>
+        )}
+      </MarkerContent>
+    </Marker>
+  )
+}
+
 type ChatSession = NonNullable<
   UseTriggerChatTransportOptions["sessions"]
 >[string]
 
 function AssistantAvatar() {
   return (
-    <MessageAvatar className="size-8 bg-transparent self-start rounded-lg">
+    <MessageAvatar className="size-8 self-start rounded-lg bg-transparent">
       <Image src="/logo.svg" alt="" width={32} height={32} />
     </MessageAvatar>
   )
@@ -91,11 +166,15 @@ export function ChatThread({
   id,
   initialMessages,
   initialSession,
+  onTurnComplete,
 }: {
   id: string
   initialMessages: UIMessage[]
   // The chat's session, once it has one; lets a reload reconnect to it.
   initialSession?: ChatSession
+  // Fires when the agent finishes a turn, stopped and failed ones included,
+  // since either may have written files first.
+  onTurnComplete?: () => void
 }) {
   const [input, setInput] = useState("")
   // The agent loads the stored thread, so only the new message is sent. A
@@ -111,6 +190,11 @@ export function ChatThread({
       id,
       messages: initialMessages,
       transport,
+      // A dropped connection ends the stream but not the turn, which keeps
+      // running on the agent; it finishes once the stream is resumed.
+      onFinish: ({ isDisconnect }) => {
+        if (!isDisconnect) onTurnComplete?.()
+      },
     })
 
   // A new game arrives with its prompt stored but unanswered; reply to it once.
@@ -170,6 +254,8 @@ export function ChatThread({
                         {message.parts.map((part, index) =>
                           part.type === "reasoning" ? (
                             <Reasoning key={index} part={part} />
+                          ) : isToolUIPart(part) ? (
+                            <ToolCall key={part.toolCallId} part={part} />
                           ) : part.type === "text" && part.text ? (
                             <Bubble key={index} variant="ghost">
                               <BubbleContent>{part.text}</BubbleContent>
