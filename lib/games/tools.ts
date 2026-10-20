@@ -1,7 +1,7 @@
 import { posix } from "node:path"
 
 import { DaytonaFileNotFoundError, type Sandbox } from "@daytona/sdk"
-import { tool } from "ai"
+import { tool, type InferUITool } from "ai"
 import { z } from "zod"
 
 import { GAME_DIR, getGameSandbox } from "@/lib/daytona/utils"
@@ -17,6 +17,64 @@ const pathInput = z
   .describe(
     "Path relative to the game directory, such as index.html or js/game.js."
   )
+
+// The parts of a game worth asking the player about. The model names one
+// before writing the question, so each question settles a single area.
+const dimensions = [
+  "loop",
+  "goal",
+  "controls",
+  "world",
+  "look",
+  "feel",
+  "sound",
+  "difficulty",
+] as const
+
+// Asks the player to choose between a few directions. It has no execute: the
+// turn pauses on the call, the player answers in the UI, and the answer comes
+// back as the tool's output on the next turn.
+const askPlayer = tool({
+  description:
+    "Ask the player to choose between 2 to 4 directions for one part of the game. Wait for their choice before building that part.",
+  inputSchema: z.object({
+    dimension: z
+      .enum(dimensions)
+      .describe(
+        "The part of the game the question is about: loop (what the player does over and over), goal (how they win or score), controls (how they play), world (setting and theme), look (art style), feel (pace and game feel), sound (music and effects), or difficulty (challenge and progression)."
+      ),
+    question: z
+      .string()
+      .min(1)
+      .describe("The question to show the player, in one short sentence."),
+    options: z
+      .array(
+        z.object({
+          id: z
+            .string()
+            .min(1)
+            .describe("A short, unique id for the option, such as dodge."),
+          label: z
+            .string()
+            .min(1)
+            .describe("The option's name, in a few words."),
+          description: z
+            .string()
+            .min(1)
+            .describe("One sentence on what this option means for the game."),
+        })
+      )
+      .min(2)
+      .max(4),
+  }),
+  outputSchema: z.object({
+    id: z.string().describe("The id of the option the player chose."),
+    label: z.string().describe("The label of the option the player chose."),
+  }),
+})
+
+// The question's input and answer, for the UI that asks it.
+export type AskPlayer = InferUITool<typeof askPlayer>
 
 // The file tools for one game, built per turn from the chat id. Every path is
 // resolved against the game directory and refused if it lands outside it, so
@@ -36,6 +94,8 @@ export function createGameTools(gameId: string) {
   }
 
   return {
+    ask_player: askPlayer,
+
     list_files: tool({
       description:
         "List the files in the game directory, or in a folder inside it, recursively. Folders end with a slash; files show their size in bytes.",

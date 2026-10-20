@@ -8,6 +8,7 @@ import {
 import {
   getToolName,
   isToolUIPart,
+  lastAssistantMessageIsCompleteWithToolCalls,
   type DynamicToolUIPart,
   type ReasoningUIPart,
   type ToolUIPart,
@@ -15,7 +16,7 @@ import {
 } from "ai"
 import { CheckIcon, XIcon } from "lucide-react"
 import Image from "next/image"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useRef, useState, type FormEvent } from "react"
 
 import { ChatComposer } from "@/components/chat-composer"
 import { Bubble, BubbleContent } from "@/components/ui/bubble"
@@ -29,6 +30,17 @@ import {
   MessageScrollerProvider,
   MessageScrollerViewport,
 } from "@/components/ui/message-scroller"
+import {
+  Questionnaire,
+  QuestionnaireActions,
+  QuestionnaireChoice,
+  QuestionnaireChoiceDescription,
+  QuestionnaireChoices,
+  QuestionnaireError,
+  QuestionnaireItem,
+  QuestionnaireSubmit,
+  QuestionnaireTitle,
+} from "@/components/ui/questionnaire"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Trace,
@@ -39,6 +51,7 @@ import {
   TraceTitle,
 } from "@/components/ui/trace"
 import { mintChatAccessToken, startChatSession } from "@/lib/games/chat-actions"
+import type { AskPlayer } from "@/lib/games/tools"
 import type { gameChat } from "@/trigger/chat"
 
 function getText(message: UIMessage) {
@@ -84,8 +97,9 @@ function Reasoning({ part }: { part: ReasoningUIPart }) {
 type ToolPart = ToolUIPart | DynamicToolUIPart
 type ToolStatus = "active" | "done" | "failed"
 
-// Labels for the game's file tools, by status; other tools show their name.
+// Labels for the game's tools, by status; other tools show their name.
 const toolLabels: Record<string, Record<ToolStatus, string>> = {
+  ask_player: { active: "Asking", done: "Answered", failed: "Couldn't ask" },
   list_files: { active: "Listing", done: "Listed", failed: "Couldn't list" },
   read_file: { active: "Reading", done: "Read", failed: "Couldn't read" },
   write_file: { active: "Writing", done: "Wrote", failed: "Couldn't write" },
@@ -150,6 +164,84 @@ function ToolCall({ part }: { part: ToolPart }) {
   )
 }
 
+function isAskPlayer(part: UIMessage["parts"][number]): part is ToolPart {
+  return isToolUIPart(part) && getToolName(part) === "ask_player"
+}
+
+// ask_player has no execute: the agent's turn pauses on the call until the
+// player picks an option here, and the pick goes back as the tool's output.
+// While the question streams in, or if the call fails, it shows as a tool line.
+function AskPlayerCall({
+  part,
+  disabled,
+  onAnswer,
+}: {
+  part: ToolPart
+  disabled: boolean
+  onAnswer: (answer: AskPlayer["output"]) => void
+}) {
+  if (part.state === "output-available") {
+    const { question } = part.input as AskPlayer["input"]
+    const { label } = part.output as AskPlayer["output"]
+    return (
+      <Marker>
+        <MarkerIcon>
+          <CheckIcon />
+        </MarkerIcon>
+        <MarkerContent>
+          {question} <span className="text-foreground">{label}</span>
+        </MarkerContent>
+      </Marker>
+    )
+  }
+  if (part.state !== "input-available") {
+    return <ToolCall part={part} />
+  }
+
+  const { question, options } = part.input as AskPlayer["input"]
+
+  // The form only submits once a choice is checked; its value is the
+  // option's id.
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const id = new FormData(event.currentTarget).get("answer")
+    const option = options.find((option) => option.id === id)
+    if (option) onAnswer({ id: option.id, label: option.label })
+  }
+
+  // A disabled item is also hidden, so the choices and button are disabled
+  // instead.
+  return (
+    <Questionnaire
+      shortcuts="numbers"
+      onSubmit={submit}
+      className="rounded-xl border p-4"
+    >
+      <QuestionnaireItem name="answer" required>
+        <QuestionnaireTitle>{question}</QuestionnaireTitle>
+        <QuestionnaireChoices>
+          {options.map((option) => (
+            <QuestionnaireChoice
+              key={option.id}
+              value={option.id}
+              disabled={disabled}
+            >
+              {option.label}
+              <QuestionnaireChoiceDescription>
+                {option.description}
+              </QuestionnaireChoiceDescription>
+            </QuestionnaireChoice>
+          ))}
+        </QuestionnaireChoices>
+        <QuestionnaireError />
+      </QuestionnaireItem>
+      <QuestionnaireActions>
+        <QuestionnaireSubmit disabled={disabled}>Answer</QuestionnaireSubmit>
+      </QuestionnaireActions>
+    </Questionnaire>
+  )
+}
+
 type ChatSession = NonNullable<
   UseTriggerChatTransportOptions["sessions"]
 >[string]
@@ -173,8 +265,8 @@ export function ChatThread({
   // The chat's session, once it has one; lets a reload reconnect to it.
   initialSession?: ChatSession
   // Fires when the agent finishes a turn, stopped and failed ones included,
-  // since either may have written files first.
-  onTurnComplete?: () => void
+  // since either may have written files first. Gets the thread as it stands.
+  onTurnComplete?: (messages: UIMessage[]) => void
 }) {
   const [input, setInput] = useState("")
   // The agent loads the stored thread, so only the new message is sent. A
@@ -185,17 +277,37 @@ export function ChatThread({
     startSession: ({ chatId }) => startChatSession({ chatId }),
     sessions: initialSession ? { [id]: initialSession } : undefined,
   })
-  const { messages, sendMessage, regenerate, resumeStream, stop, status } =
-    useChat({
-      id,
-      messages: initialMessages,
-      transport,
-      // A dropped connection ends the stream but not the turn, which keeps
-      // running on the agent; it finishes once the stream is resumed.
-      onFinish: ({ isDisconnect }) => {
-        if (!isDisconnect) onTurnComplete?.()
-      },
-    })
+  const {
+    messages,
+    sendMessage,
+    regenerate,
+    resumeStream,
+    stop,
+    status,
+    addToolOutput,
+  } = useChat({
+    id,
+    messages: initialMessages,
+    transport,
+    // Answering ask_player resolves the paused call; this sends it back so
+    // the agent carries on with the answer.
+    sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    // A dropped connection ends the stream but not the turn, which keeps
+    // running on the agent; it finishes once the stream is resumed.
+    onFinish: ({ messages, isDisconnect }) => {
+      if (!isDisconnect) onTurnComplete?.(messages)
+    },
+  })
+  const busy = status === "submitted" || status === "streaming"
+
+  // A question waiting on the player blocks the composer: a new message would
+  // leave the question's tool call without a result, which the model rejects.
+  const lastMessage = messages.at(-1)
+  const awaitingAnswer =
+    lastMessage?.role === "assistant" &&
+    lastMessage.parts.some(
+      (part) => isAskPlayer(part) && part.state === "input-available"
+    )
 
   // A new game arrives with its prompt stored but unanswered; reply to it once.
   // Once the chat has a session, that reply (or a later one) may still be
@@ -254,6 +366,21 @@ export function ChatThread({
                         {message.parts.map((part, index) =>
                           part.type === "reasoning" ? (
                             <Reasoning key={index} part={part} />
+                          ) : isAskPlayer(part) ? (
+                            <AskPlayerCall
+                              key={part.toolCallId}
+                              part={part}
+                              // Only the latest message's question is still
+                              // open.
+                              disabled={busy || message !== lastMessage}
+                              onAnswer={(output) =>
+                                void addToolOutput({
+                                  tool: "ask_player",
+                                  toolCallId: part.toolCallId,
+                                  output,
+                                })
+                              }
+                            />
                           ) : isToolUIPart(part) ? (
                             <ToolCall key={part.toolCallId} part={part} />
                           ) : part.type === "text" && part.text ? (
@@ -295,9 +422,14 @@ export function ChatThread({
           value={input}
           onValueChange={setInput}
           onSubmit={submit}
-          onStop={cancel}
-          pending={status === "submitted" || status === "streaming"}
-          placeholder="Ask for a change..."
+          // Without onStop, a pending composer is just disabled.
+          onStop={busy ? cancel : undefined}
+          pending={busy || awaitingAnswer}
+          placeholder={
+            awaitingAnswer
+              ? "Answer the question above to continue..."
+              : "Ask for a change..."
+          }
         />
       </div>
     </div>
