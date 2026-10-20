@@ -18,7 +18,6 @@ export default async function Page({ params }: PageProps<"/games/[id]">) {
       <GameChat
         id={game.id}
         initialMessages={game.messages}
-        sandboxId={game.sandboxId}
         initialSession={
           game.chatAccessToken
             ? {

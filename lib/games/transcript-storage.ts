@@ -99,14 +99,14 @@ export const gameTranscriptStorage: TranscriptStorage = {
       messages = game?.messages ?? []
     }
 
-    // The client sends only its newest message (none for a regenerate).
+    // The client sends only its newest message (none for a regenerate). An
+    // answer to ask_player comes back as the asking message, cut down to the
+    // answered tool part; the runtime merges that answer into the stored copy,
+    // so keep the stored one rather than replacing it.
     messages = [...messages]
     for (const incoming of incomingMessages) {
-      const index = messages.findIndex((m) => m.id === incoming.id)
-      if (index === -1) {
+      if (!messages.some((m) => m.id === incoming.id)) {
         messages.push(incoming)
-      } else {
-        messages[index] = incoming
       }
     }
 
