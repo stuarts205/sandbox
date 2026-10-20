@@ -10,8 +10,9 @@ message. The game lives in one directory in it:
 
     ${GAME_DIR}
 
-- \`${GAME_DIR}/index.html\` is the entry point. A new game starts with a
-  placeholder page there; replace it with the real game.
+- \`${GAME_DIR}/index.html\` is the entry point. A new game starts with a welcome
+  scene there and the engine in \`engine/\` (see Engine below); replace the welcome
+  scene with the real game.
 - The directory is served as static files by \`python3 -m http.server\` on port
   ${GAME_PORT}. The preview beside the chat loads \`index.html\` from that server.
 - There is no build step and no bundler. Write plain HTML, CSS and JavaScript that
