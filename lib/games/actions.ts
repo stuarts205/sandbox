@@ -9,9 +9,10 @@ import { redirect } from "next/navigation"
 import { anthropic, generateMessageId } from "@/lib/ai"
 import { db } from "@/lib/db"
 import { games } from "@/lib/db/schema"
+import { isGameModelId, type GameModelId } from "@/lib/games/model-catalog"
 import { errorAttributes } from "@/lib/log"
 
-export async function createGame(prompt: string) {
+export async function createGame(prompt: string, modelId: GameModelId) {
   const { orgId } = await auth.protect()
   if (!orgId) {
     throw new Error("No active organization")
@@ -20,6 +21,10 @@ export async function createGame(prompt: string) {
   const trimmed = prompt.trim()
   if (!trimmed) {
     throw new Error("Prompt is required")
+  }
+
+  if (!isGameModelId(modelId)) {
+    throw new Error("Unknown model")
   }
 
   const title = await generateTitle(trimmed)
@@ -41,7 +46,9 @@ export async function createGame(prompt: string) {
   // The (app) layout renders the sidebar's games list.
   revalidatePath("/(app)", "layout")
 
-  redirect(`/games/${game.id}`)
+  // The model isn't stored with the game: the URL hands the home page's pick
+  // to the chat, which runs the opening turn on it.
+  redirect(`/games/${game.id}?model=${modelId}`)
 }
 
 async function generateTitle(prompt: string) {
