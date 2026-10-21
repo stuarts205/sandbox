@@ -52,6 +52,7 @@ import {
   TraceTitle,
 } from "@/components/ui/trace"
 import { mintChatAccessToken, startChatSession } from "@/lib/games/chat-actions"
+import { defaultGameModelId, type GameModelId } from "@/lib/games/model-catalog"
 import { errorAttributes } from "@/lib/log"
 import type { AskPlayer } from "@/lib/games/tools"
 import type { gameChat } from "@/trigger/chat"
@@ -260,24 +261,31 @@ export function ChatThread({
   id,
   initialMessages,
   initialSession,
+  initialModelId = defaultGameModelId,
   onTurnComplete,
 }: {
   id: string
   initialMessages: UIMessage[]
   // The chat's session, once it has one; lets a reload reconnect to it.
   initialSession?: ChatSession
+  // The model picked on the home page, which also runs the opening turn.
+  initialModelId?: GameModelId
   // Fires when the agent finishes a turn, stopped and failed ones included,
   // since either may have written files first. Gets the thread as it stands.
   onTurnComplete?: (messages: UIMessage[]) => void
 }) {
   const [input, setInput] = useState("")
+  const [modelId, setModelId] = useState(initialModelId)
   // The agent loads the stored thread, so only the new message is sent. A
   // regenerate sends none: the agent replies to the stored thread as-is.
+  // clientData goes with every message, so a model change applies from the
+  // next turn on.
   const transport = useTriggerChatTransport<typeof gameChat>({
     task: "game-chat",
     accessToken: ({ chatId }) => mintChatAccessToken(chatId),
     startSession: ({ chatId }) => startChatSession({ chatId }),
     sessions: initialSession ? { [id]: initialSession } : undefined,
+    clientData: { model: modelId },
   })
   const {
     messages,
@@ -435,6 +443,8 @@ export function ChatThread({
           // Without onStop, a pending composer is just disabled.
           onStop={busy ? cancel : undefined}
           pending={busy || awaitingAnswer}
+          modelId={modelId}
+          onModelChange={setModelId}
           placeholder={
             awaitingAnswer
               ? "Answer the question above to continue..."

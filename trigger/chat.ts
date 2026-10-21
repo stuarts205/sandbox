@@ -1,14 +1,16 @@
-import type { AnthropicLanguageModelOptions } from "@ai-sdk/anthropic"
 import * as Sentry from "@sentry/node"
 import { chat } from "@trigger.dev/sdk/ai"
-import { isToolUIPart, stepCountIs } from "ai"
+import { isToolUIPart } from "ai"
 import { eq } from "drizzle-orm"
+import { z } from "zod"
 
-import { anthropic, generateMessageId } from "@/lib/ai"
+import { generateMessageId } from "@/lib/ai"
 import { createGameSandbox } from "@/lib/daytona/utils"
 import { db } from "@/lib/db/client"
 import { games } from "@/lib/db/schema"
+import { gameAgentSettings } from "@/lib/games/agent"
 import { gameInstructions } from "@/lib/games/instructions"
+import { defaultGameModelId, gameModelIds } from "@/lib/games/model-catalog"
 import { createGameTools } from "@/lib/games/tools"
 import { gameTranscriptStorage } from "@/lib/games/transcript-storage"
 import { errorAttributes } from "@/lib/log"
@@ -18,6 +20,11 @@ import { errorAttributes } from "@/lib/log"
 // active org owns the game before handing out a token for its chat.
 export const gameChat = chat.agent({
   id: "game-chat",
+  // The page sends the model with every message, so each turn can use a
+  // different one. A page that sends none gets the default.
+  clientDataSchema: z
+    .object({ model: z.enum(gameModelIds).optional() })
+    .optional(),
   // Replies get the same msg_ ids createGame gives the opening prompt.
   uiMessageStreamOptions: { generateMessageId },
 
@@ -53,6 +60,7 @@ export const gameChat = chat.agent({
   // the only place Sentry hears about it.
   onTurnComplete: async ({
     chatId,
+    clientData,
     ctx,
     turn,
     responseMessage,
@@ -66,6 +74,7 @@ export const gameChat = chat.agent({
     const attributes = {
       "game.id": chatId,
       "trigger.run.id": ctx.run.id,
+      "gen_ai.request.model": clientData?.model ?? defaultGameModelId,
       "chat.turn": turn,
       "chat.stopped": stopped,
       "chat.tool_calls": toolCalls,
@@ -93,23 +102,11 @@ export const gameChat = chat.agent({
     await Sentry.flush(2000)
   },
 
-  run: async ({ messages, tools, signal, streamText }) =>
+  run: async ({ messages, tools, clientData, signal, streamText }) =>
     streamText({
-      model: anthropic("claude-opus-5"),
+      ...gameAgentSettings(clientData?.model ?? defaultGameModelId),
       messages,
       tools,
-      // streamText stops after one step by default, which would end the turn
-      // at the first tool call. Building a game takes many reads and writes.
-      stopWhen: stepCountIs(50),
       abortSignal: signal,
-      providerOptions: {
-        anthropic: {
-          // Sonnet 5.5 always thinks first, and by default returns that thinking
-          // empty, so the reply looks stalled. Summaries give the UI progress.
-          thinking: { type: "adaptive", display: "summarized" },
-          // The API default is high, which thinks for minutes before replying.
-          effort: "medium",
-        } satisfies AnthropicLanguageModelOptions,
-      },
     }),
 })
