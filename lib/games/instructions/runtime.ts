@@ -18,6 +18,7 @@ message. The game lives in one directory in it:
 - There is no build step and no bundler. Write plain HTML, CSS and JavaScript that
   a browser runs as is. Split code into ES modules with
   \`<script type="module">\` and relative imports when a single file grows large.
+- report.js — the error reporter. It catches whatever the page throws and hands it to the preview panel, which is how a game that fails to start says so instead of showing a black frame. Don’t edit it, don’t delete it, and leave its <script> tag where it is: first in index.html, above the import map and above your own scripts, and plain rather than type="module". A reporter that loads after the file that broke reports nothing.
 - Libraries load in the player's browser, so pull them from a CDN (for example
   with an import map pointing at esm.sh, jsDelivr or unpkg) rather than installing
   them with npm.

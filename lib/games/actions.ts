@@ -1,6 +1,7 @@
 "use server"
 
 import { auth } from "@clerk/nextjs/server"
+import * as Sentry from "@sentry/nextjs"
 import { generateText, type UIMessage } from "ai"
 import { revalidatePath } from "next/cache"
 import { redirect } from "next/navigation"
@@ -8,6 +9,7 @@ import { redirect } from "next/navigation"
 import { anthropic, generateMessageId } from "@/lib/ai"
 import { db } from "@/lib/db"
 import { games } from "@/lib/db/schema"
+import { errorAttributes } from "@/lib/log"
 
 export async function createGame(prompt: string) {
   const { orgId } = await auth.protect()
@@ -34,6 +36,8 @@ export async function createGame(prompt: string) {
     .values({ orgId, title, messages: [firstMessage] })
     .returning({ id: games.id })
 
+  Sentry.logger.info("Game created", { "game.id": game.id, "org.id": orgId })
+
   // The (app) layout renders the sidebar's games list.
   revalidatePath("/(app)", "layout")
 
@@ -52,7 +56,10 @@ async function generateTitle(prompt: string) {
     const title = text.trim()
     if (title) return title
   } catch (error) {
-    console.error("Failed to generate game title", error)
+    Sentry.logger.warn(
+      "Game title generation failed; using the prompt",
+      errorAttributes(error)
+    )
   }
 
   // A title is nice-to-have; don't block game creation on it.

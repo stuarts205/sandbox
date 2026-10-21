@@ -2,6 +2,9 @@ import { readdir } from "node:fs/promises"
 import path from "node:path"
 
 import { DaytonaNotFoundError } from "@daytona/sdk"
+// @sentry/node rather than @sentry/nextjs: this also runs in the Trigger.dev
+// chat agent. Under Next it's the same copy @sentry/nextjs sets up.
+import * as Sentry from "@sentry/node"
 import { eq } from "drizzle-orm"
 
 import { daytona } from "@/lib/daytona/client"
@@ -30,6 +33,11 @@ export async function createGameSandbox(gameId: string) {
     .set({ sandboxId: sandbox.id })
     .where(eq(games.id, gameId))
 
+  Sentry.logger.info("Game sandbox created", {
+    "game.id": gameId,
+    "sandbox.id": sandbox.id,
+  })
+
   return { sandbox }
 }
 
@@ -50,14 +58,31 @@ export async function getGameSandbox(gameId: string) {
     return createGameSandbox(gameId)
   }
 
+  // A replaced sandbox takes the game's files with it, so the game starts over
+  // from the runtime files.
+  const replace = (state: string) => {
+    Sentry.logger.warn("Game sandbox lost; replacing it", {
+      "game.id": gameId,
+      "sandbox.id": game.sandboxId!,
+      "sandbox.state": state,
+    })
+    return createGameSandbox(gameId)
+  }
+
   let sandbox: Sandbox
   try {
     sandbox = await daytona.get(game.sandboxId)
   } catch (error) {
     if (error instanceof DaytonaNotFoundError) {
-      return createGameSandbox(gameId)
+      return replace("not_found")
     }
     throw error
+  }
+
+  const attributes = {
+    "game.id": gameId,
+    "sandbox.id": sandbox.id,
+    "sandbox.state": sandbox.state ?? "unknown",
   }
 
   switch (sandbox.state) {
@@ -65,7 +90,7 @@ export async function getGameSandbox(gameId: string) {
       break
     case "destroyed":
     case "destroying":
-      return createGameSandbox(gameId)
+      return replace(sandbox.state)
     case "creating":
     case "starting":
     case "restoring":
@@ -73,18 +98,30 @@ export async function getGameSandbox(gameId: string) {
       await sandbox.waitUntilStarted()
       break
     case "stopping":
+      Sentry.logger.info("Starting stopped game sandbox", attributes)
       await sandbox.waitUntilStopped()
       await sandbox.start()
       break
     case "error":
+      // Logged as well as thrown: the throw reaches the agent as a failed tool
+      // call, not as a run failure Sentry would see.
       if (!sandbox.recoverable) {
+        Sentry.logger.error("Game sandbox failed and can't be recovered", {
+          ...attributes,
+          "sandbox.error_reason": sandbox.errorReason ?? "unknown",
+        })
         throw new Error(
           `Sandbox ${sandbox.id} for game ${gameId} failed: ${sandbox.errorReason}`
         )
       }
+      Sentry.logger.warn("Recovering failed game sandbox", {
+        ...attributes,
+        "sandbox.error_reason": sandbox.errorReason ?? "unknown",
+      })
       await sandbox.recover()
       break
     default:
+      Sentry.logger.info("Starting stopped game sandbox", attributes)
       await sandbox.start()
   }
 
@@ -97,7 +134,8 @@ export async function getGameSandbox(gameId: string) {
 // check fails.
 export async function startGameServer(sandboxId: string) {
   const sandbox = await daytona.get(sandboxId)
-  if (sandbox.state !== "started") {
+  const wasStarted = sandbox.state === "started"
+  if (!wasStarted) {
     await sandbox.start()
   }
 
@@ -106,6 +144,10 @@ export async function startGameServer(sandboxId: string) {
       `sh -c "nohup python3 -m http.server ${GAME_PORT} --directory ${GAME_DIR} > /tmp/game-server.log 2>&1 &"`
     )
     await waitForGameServer(sandbox)
+    Sentry.logger.info("Game server launched", {
+      "sandbox.id": sandbox.id,
+      "sandbox.was_started": wasStarted,
+    })
   }
 
   return { sandbox }
