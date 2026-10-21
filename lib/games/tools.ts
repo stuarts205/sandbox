@@ -1,10 +1,12 @@
 import { posix } from "node:path"
 
 import { DaytonaFileNotFoundError, type Sandbox } from "@daytona/sdk"
+import * as Sentry from "@sentry/node"
 import { tool, type InferUITool } from "ai"
 import { z } from "zod"
 
 import { GAME_DIR, getGameSandbox } from "@/lib/daytona/utils"
+import { errorAttributes } from "@/lib/log"
 
 // Larger reads are cut off so one file can't flood the model's context.
 const MAX_READ_BYTES = 256 * 1024
@@ -93,6 +95,38 @@ export function createGameTools(gameId: string) {
     return sandbox
   }
 
+  // A tool's error goes back to the model as the call's result rather than
+  // failing the run, so nothing else reports it. A ToolInputError is the
+  // model's to fix and isn't logged, except a path outside the game directory,
+  // which may be the model being steered at the rest of the sandbox. Anything
+  // else is a fault in the sandbox.
+  const logged =
+    <I extends { path: string }, O>(
+      toolName: string,
+      execute: (input: I) => Promise<O>
+    ) =>
+    async (input: I) => {
+      try {
+        return await execute(input)
+      } catch (error) {
+        const attributes = {
+          "game.id": gameId,
+          "gen_ai.tool.name": toolName,
+          "file.path": input.path,
+          ...errorAttributes(error),
+        }
+        if (error instanceof OutsideGameDirError) {
+          Sentry.logger.warn(
+            "Game tool refused a path outside the game",
+            attributes
+          )
+        } else if (!(error instanceof ToolInputError)) {
+          Sentry.logger.error("Game tool failed", attributes)
+        }
+        throw error
+      }
+    }
+
   return {
     ask_player: askPlayer,
 
@@ -106,7 +140,7 @@ export function createGameTools(gameId: string) {
             "Folder to list, relative to the game directory. Defaults to the whole game."
           ),
       }),
-      execute: async ({ path }) => {
+      execute: logged("list_files", async ({ path }) => {
         const absolute = resolveGamePath(path)
         const fs = (await getSandbox()).fs
         const entries = await fs
@@ -132,14 +166,14 @@ export function createGameTools(gameId: string) {
           ].join("\n")
         }
         return lines.join("\n")
-      },
+      }),
     }),
 
     read_file: tool({
       description:
         "Read a text file from the game directory. Read a file before changing it so the edit matches what is there.",
       inputSchema: z.object({ path: pathInput }),
-      execute: async ({ path }) => {
+      execute: logged("read_file", async ({ path }) => {
         const absolute = resolveGameFile(path)
         const fs = (await getSandbox()).fs
         const content = await fs
@@ -152,7 +186,7 @@ export function createGameTools(gameId: string) {
           return `${content.subarray(0, MAX_READ_BYTES).toString("utf8")}\n\n[Truncated: ${path} is ${content.length} bytes; only the first ${MAX_READ_BYTES} are shown.]`
         }
         return content.toString("utf8")
-      },
+      }),
     }),
 
     write_file: tool({
@@ -162,13 +196,13 @@ export function createGameTools(gameId: string) {
         path: pathInput,
         content: z.string().describe("The file's complete new contents."),
       }),
-      execute: async ({ path, content }) => {
+      execute: logged("write_file", async ({ path, content }) => {
         const absolute = resolveGameFile(path)
         const fs = (await getSandbox()).fs
         const file = Buffer.from(content, "utf8")
         await fs.uploadFile(file, absolute)
         return `Wrote ${toGamePath(absolute)} (${file.length} bytes).`
-      },
+      }),
     }),
 
     replace_text: tool({
@@ -185,38 +219,44 @@ export function createGameTools(gameId: string) {
           .default(false)
           .describe("Replace every occurrence instead of exactly one."),
       }),
-      execute: async ({ path, old_text, new_text, replace_all }) => {
-        const absolute = resolveGameFile(path)
-        const fs = (await getSandbox()).fs
-        const content = await fs
-          .downloadFile(absolute)
-          .catch((error) => rethrow(error, path))
+      execute: logged(
+        "replace_text",
+        async ({ path, old_text, new_text, replace_all }) => {
+          const absolute = resolveGameFile(path)
+          const fs = (await getSandbox()).fs
+          const content = await fs
+            .downloadFile(absolute)
+            .catch((error) => rethrow(error, path))
 
-        // split/join rather than String.replace, which reads $ in new_text as
-        // a substitution pattern.
-        const parts = content.toString("utf8").split(old_text)
-        const count = parts.length - 1
-        if (count === 0) {
-          throw new Error(
-            `old_text was not found in ${path}. Read the file and copy the text exactly.`
-          )
-        }
-        if (count > 1 && !replace_all) {
-          throw new Error(
-            `old_text appears ${count} times in ${path}. Include more surrounding text to pick one, or set replace_all.`
-          )
-        }
+          // split/join rather than String.replace, which reads $ in new_text as
+          // a substitution pattern.
+          const parts = content.toString("utf8").split(old_text)
+          const count = parts.length - 1
+          if (count === 0) {
+            throw new ToolInputError(
+              `old_text was not found in ${path}. Read the file and copy the text exactly.`
+            )
+          }
+          if (count > 1 && !replace_all) {
+            throw new ToolInputError(
+              `old_text appears ${count} times in ${path}. Include more surrounding text to pick one, or set replace_all.`
+            )
+          }
 
-        await fs.uploadFile(Buffer.from(parts.join(new_text), "utf8"), absolute)
-        return `Replaced ${count} occurrence${count === 1 ? "" : "s"} in ${toGamePath(absolute)}.`
-      },
+          await fs.uploadFile(
+            Buffer.from(parts.join(new_text), "utf8"),
+            absolute
+          )
+          return `Replaced ${count} occurrence${count === 1 ? "" : "s"} in ${toGamePath(absolute)}.`
+        }
+      ),
     }),
 
     delete_file: tool({
       description:
         "Delete a file, or a folder and everything in it, from the game directory.",
       inputSchema: z.object({ path: pathInput }),
-      execute: async ({ path }) => {
+      execute: logged("delete_file", async ({ path }) => {
         const absolute = resolveGameFile(path)
         const fs = (await getSandbox()).fs
         const { isDir } = await fs
@@ -226,10 +266,16 @@ export function createGameTools(gameId: string) {
         return isDir
           ? `Deleted the folder ${toGamePath(absolute)} and everything in it.`
           : `Deleted ${toGamePath(absolute)}.`
-      },
+      }),
     }),
   }
 }
+
+// A mistake in the model's call, such as a missing file or an edit that
+// matches nothing, for the model to correct.
+class ToolInputError extends Error {}
+
+class OutsideGameDirError extends ToolInputError {}
 
 // Turns a path from the model, relative to the game directory or absolute
 // inside it, into an absolute sandbox path. Anything that resolves outside
@@ -237,7 +283,7 @@ export function createGameTools(gameId: string) {
 function resolveGamePath(path: string) {
   const absolute = posix.resolve(GAME_DIR, path)
   if (absolute !== GAME_DIR && !absolute.startsWith(`${GAME_DIR}/`)) {
-    throw new Error(`${path} is outside the game directory.`)
+    throw new OutsideGameDirError(`${path} is outside the game directory.`)
   }
   return absolute
 }
@@ -247,7 +293,7 @@ function resolveGamePath(path: string) {
 function resolveGameFile(path: string) {
   const absolute = resolveGamePath(path)
   if (absolute === GAME_DIR) {
-    throw new Error(
+    throw new ToolInputError(
       "Give a path inside the game directory, not the directory itself."
     )
   }
@@ -262,7 +308,7 @@ function toGamePath(absolute: string) {
 // in paths relative to the game directory.
 function rethrow(error: unknown, path: string): never {
   if (error instanceof DaytonaFileNotFoundError) {
-    throw new Error(`${path} does not exist.`)
+    throw new ToolInputError(`${path} does not exist.`)
   }
   throw error
 }

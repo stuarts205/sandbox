@@ -1,6 +1,7 @@
 "use client"
 
 import { useChat } from "@ai-sdk/react"
+import * as Sentry from "@sentry/nextjs"
 import {
   useTriggerChatTransport,
   type UseTriggerChatTransportOptions,
@@ -51,6 +52,7 @@ import {
   TraceTitle,
 } from "@/components/ui/trace"
 import { mintChatAccessToken, startChatSession } from "@/lib/games/chat-actions"
+import { errorAttributes } from "@/lib/log"
 import type { AskPlayer } from "@/lib/games/tools"
 import type { gameChat } from "@/trigger/chat"
 
@@ -296,6 +298,14 @@ export function ChatThread({
     // running on the agent; it finishes once the stream is resumed.
     onFinish: ({ messages, isDisconnect }) => {
       if (!isDisconnect) onTurnComplete?.(messages)
+    },
+    // Failures between the page and the agent: starting the session, minting
+    // a token, or the stream itself. The agent's own failures are logged there.
+    onError: (error) => {
+      Sentry.logger.error("Chat stream failed", {
+        "game.id": id,
+        ...errorAttributes(error),
+      })
     },
   })
   const busy = status === "submitted" || status === "streaming"

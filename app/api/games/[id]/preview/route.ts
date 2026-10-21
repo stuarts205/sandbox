@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/nextjs"
 import type { NextRequest } from "next/server"
 
 import { GAME_PORT, startGameServer } from "@/lib/daytona/utils"
@@ -15,6 +16,11 @@ export async function GET(
   const { id } = await ctx.params
   const game = await getGame(id)
   if (!game?.sandboxId) {
+    // The page only asks once the game has files, so its sandbox should exist.
+    Sentry.logger.warn("Preview requested for a game without a sandbox", {
+      "game.id": id,
+      "game.found": Boolean(game),
+    })
     return Response.json({ error: "Not found" }, { status: 404 })
   }
 

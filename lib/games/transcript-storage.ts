@@ -4,6 +4,7 @@ import type {
   TranscriptScope,
   TranscriptStorage,
 } from "@trigger.dev/sdk/ai"
+import * as Sentry from "@sentry/node"
 import type { UIMessage } from "ai"
 import { eq } from "drizzle-orm"
 
@@ -31,6 +32,11 @@ export const gameTranscriptStorage: TranscriptStorage = {
       .where(eq(games.id, chatId))
       .limit(1)
     if (!game) {
+      // The game was deleted under a live chat, or the chat id is wrong; the
+      // agent carries on with an empty thread.
+      Sentry.logger.warn("Chat transcript requested for a missing game", {
+        "game.id": chatId,
+      })
       return { messages: [], state: null }
     }
 

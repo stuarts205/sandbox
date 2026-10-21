@@ -1,6 +1,7 @@
 import type { AnthropicLanguageModelOptions } from "@ai-sdk/anthropic"
+import * as Sentry from "@sentry/node"
 import { chat } from "@trigger.dev/sdk/ai"
-import { stepCountIs } from "ai"
+import { isToolUIPart, stepCountIs } from "ai"
 import { eq } from "drizzle-orm"
 
 import { anthropic, generateMessageId } from "@/lib/ai"
@@ -10,6 +11,7 @@ import { games } from "@/lib/db/schema"
 import { gameInstructions } from "@/lib/games/instructions"
 import { createGameTools } from "@/lib/games/tools"
 import { gameTranscriptStorage } from "@/lib/games/transcript-storage"
+import { errorAttributes } from "@/lib/log"
 
 // The chat id is the game id. The agent runs with no request or Clerk session,
 // so it reads and writes the game by id alone: the server actions check the
@@ -44,6 +46,51 @@ export const gameChat = chat.agent({
     chat.deferBeforeOutput(
       db.update(games).set({ chatAccessToken }).where(eq(games.id, chatId))
     )
+  },
+
+  // One log per turn, stopped and failed ones included. A failed turn reaches
+  // the player as an error in the stream but doesn't fail the run, so this is
+  // the only place Sentry hears about it.
+  onTurnComplete: async ({
+    chatId,
+    ctx,
+    turn,
+    responseMessage,
+    stopped,
+    finishReason,
+    error,
+    usage,
+  }) => {
+    const toolCalls =
+      responseMessage?.parts.filter((part) => isToolUIPart(part)).length ?? 0
+    const attributes = {
+      "game.id": chatId,
+      "trigger.run.id": ctx.run.id,
+      "chat.turn": turn,
+      "chat.stopped": stopped,
+      "chat.tool_calls": toolCalls,
+      ...(finishReason && { "gen_ai.response.finish_reasons": finishReason }),
+      ...(usage?.inputTokens !== undefined && {
+        "gen_ai.usage.input_tokens": usage.inputTokens,
+      }),
+      ...(usage?.outputTokens !== undefined && {
+        "gen_ai.usage.output_tokens": usage.outputTokens,
+      }),
+    }
+    if (error !== undefined) {
+      Sentry.logger.error("Chat turn failed", {
+        ...attributes,
+        ...errorAttributes(error),
+      })
+    } else {
+      Sentry.logger.info("Chat turn completed", attributes)
+    }
+  },
+
+  // The run stops using compute here until the next message; send the turn's
+  // logs before it does.
+  onChatSuspend: async () => {
+    await Sentry.flush(2000)
   },
 
   run: async ({ messages, tools, signal, streamText }) =>

@@ -14,10 +14,13 @@ same engine with a fixed camera looking down or from the side.
 
 ## Starting point
 
-\`index.html\` loads \`style.css\`, an import map for \`three\` and \`three/addons/\`
-(three.js r186 from jsDelivr), the \`#game\` and \`#hud\` elements, and \`main.js\`.
+\`index.html\` loads \`report.js\`, \`style.css\`, an import map for \`three\` and
+\`three/addons/\` (three.js r186 from jsDelivr), the \`#game\` and \`#hud\` elements,
+and \`main.js\`. \`report.js\` reports the game's errors to the app around the
+preview; leave it unchanged and keep it as the first script in \`<head>\`.
 \`main.js\` and the \`.welcome\` block in \`index.html\` are the placeholder welcome
-scene: replace both with the game, keep the import map, \`#game\` and \`#hud\`.
+scene: replace both with the game, keep \`report.js\`, the import map, \`#game\`
+and \`#hud\`.
 Add new import-map entries for other libraries the same way.
 
 A game's \`main.js\` usually looks like this:

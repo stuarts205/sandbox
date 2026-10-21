@@ -1,5 +1,7 @@
+import { esbuildPlugin } from "@trigger.dev/build/extensions";
 import { additionalFiles } from "@trigger.dev/build/extensions/core";
 import { defineConfig } from "@trigger.dev/sdk";
+import { sentryEsbuildPlugin } from "@sentry/esbuild-plugin";
 
 export default defineConfig({
   project: "proj_hdivetvuabpaqicexpkg",
@@ -25,6 +27,16 @@ export default defineConfig({
       // Seeded into each new game sandbox from disk rather than imported, so
       // the bundler won't pick it up on its own.
       additionalFiles({ files: ["lib/games/runtime/**"] }),
+      // Uploads source maps so task stack traces in Sentry are readable.
+      // Deploy-only, and last so it sees the final bundle.
+      esbuildPlugin(
+        sentryEsbuildPlugin({
+          org: "student-zjt",
+          project: "sandbox",
+          authToken: process.env.SENTRY_AUTH_TOKEN,
+        }),
+        { placement: "last", target: "deploy" },
+      ),
     ],
   },
 });
